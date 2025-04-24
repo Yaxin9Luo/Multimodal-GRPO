@@ -1,0 +1,39 @@
+model:
+  pretrained_model_path: "Qwen2.5-VL-3B-Instruct"
+  device: "cuda"
+  dtype: "bfloat16"
+data:
+  path: "ViRL39K"
+  images_dir: "ViRL39K/images"
+  test_ratio: 0.01
+  max_val_samples: 128      # Limit validation samples for faster evaluation
+training:
+  random_seed: 1337
+  max_prompt_len: 256
+  max_gen_len: 512           # Reduced for vision-language model
+  batch_size: 64            # Reduced batch size for multimodal model
+  num_questions_per_batch: 8  # Reduced for larger images
+  # Number of examples per gradient accumulation step
+  micro_batch_size: 2
+  max_grad_norm: 1.0
+  learning_rate: 4.0e-6      # Lower learning rate for vision-language model
+  weight_decay: 0.0
+  betas: [0.9, 0.999]
+  ckpt_dir: "ckpt_vl"
+  log_dir: "logs_vl"
+  response_log_dir: "logs_responses"  # Directory for saving response logs
+  skip_unfinished_episodes: false
+  ckpt_save_interval: 500    
+  eval_interval: 100         
+  max_eval_batches: 8    
+  # save GPU memory by offloading the optimizer states to CPU
+  memory_efficient_adamw: true
+  # WandB configuration
+  wandb_enabled: true        # Toggle to enable/disable WandB logging
+  max_steps: 10000           # Train for 10000 steps
+wandb:
+  project: "GRPO-Zero-VL"
+  name: "Qwen2.5-VL-ViRL-Training"
+  tags: ["Qwen2.5-VL", "ViRL39K", "GRPO", "multimodal"]
+  notes: "Training Qwen2.5-VL on ViRL39K dataset using GRPO"
+  mode: "online" 
