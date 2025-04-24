@@ -1,4 +1,4 @@
-# GRPO:Zero
+# Multimodal-GRPO
 
 GRPO training with minimal dependencies (and low GPU memory usage!). We implement almost everything from scratch and only depend on `tokenizers` for tokenization and `pytorch` for training. 
 - No `transformers` and `vLLM` dependencies! 
