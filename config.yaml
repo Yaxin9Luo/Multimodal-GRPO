@@ -19,6 +19,8 @@ training:
   betas: [0.9, 0.999]
   ckpt_dir: "ckpt"
   log_dir: "logs"
+  responses_log_dir: "logs/responses"  # Directory to save model response JSON files
+  response_log_interval: 1  # Save responses every 5 steps
   skip_unfinished_episodes: false
   ckpt_save_interval: 100
   eval_interval: 10

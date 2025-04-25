@@ -1,4 +1,5 @@
 import html
+import json
 import time
 from argparse import ArgumentParser
 from datetime import datetime
@@ -16,6 +17,37 @@ from grpo import rollout, update_policy
 from optimizer import MemoryEfficientAdamW
 from qwen2_model import Transformer
 from tokenizer import Tokenizer
+
+
+def save_responses_to_json(episodes, step, log_file_path):
+    """Save model responses to a JSON file.
+    
+    Args:
+        episodes: List of episodes from rollout.
+        step: Current training step.
+        log_file_path: Path to the JSON log file.
+    """
+    responses_data = []
+    for i, episode in enumerate(episodes):
+        response_data = {
+            "step": step,
+            "episode_id": i,
+            "prompt": episode.prefix,
+            "response": episode.text[len(episode.prefix):],  # Just the generated part
+            "full_text": episode.text,
+            "reward": float(episode.reward),
+            "format_reward": float(episode.reward_info["format_reward"]),
+            "answer_reward": float(episode.reward_info["answer_reward"]),
+            "is_finished": bool(episode.is_finished),
+            "numbers": [],  # Default empty list
+            "target": None,  # Default None
+            "timestamp": datetime.now().isoformat()
+        }
+        responses_data.append(response_data)
+    
+    # Instead of appending, replace the entire contents with just the current step's responses
+    with open(log_file_path, "w") as f:
+        json.dump(responses_data, f, indent=2)
 
 
 def evaluate(model, tokenizer, device, dtype, config):
@@ -111,9 +143,17 @@ def main(config_path: str):
     current_time = datetime.now().strftime(r"%Y%m%d-%H%M%S")
     tb_writer = SummaryWriter(log_dir=f"{config['training']['log_dir']}/{current_time}")
     
+    # Create a responses log file
+    log_dir = Path(config["training"].get("responses_log_dir", config["training"]["log_dir"]))
+    log_dir.mkdir(parents=True, exist_ok=True)
+    responses_log_file = log_dir / f"responses_{current_time}.json"
+    
     # Log the directory for TensorBoard logs to wandb
     if wandb_enabled:
-        wandb.config.update({"tensorboard_log_dir": f"{config['training']['log_dir']}/{current_time}"})
+        wandb.config.update({
+            "tensorboard_log_dir": f"{config['training']['log_dir']}/{current_time}",
+            "responses_log_file": str(responses_log_file)
+        })
     
     tokenizer = Tokenizer(str(pretrained_model_path / "tokenizer.json"))
 
@@ -163,6 +203,12 @@ def main(config_path: str):
         )
         if config["training"]["skip_unfinished_episodes"]:
             episodes = [episode for episode in episodes if episode.is_finished]
+        
+        # Save model responses to JSON file
+        log_interval = config["training"].get("response_log_interval", config["training"]["eval_interval"])
+        if step % log_interval == 0:
+            save_responses_to_json(episodes, step, responses_log_file)
+        
         results = update_policy(
             model=model,
             optimizer=optimizer,
@@ -216,6 +262,38 @@ def main(config_path: str):
             # Log evaluation metrics to wandb
             if wandb_enabled:
                 wandb.log({"success_rate/eval": eval_success_rate}, step=step)
+                
+            # Log eval responses to JSON as well
+            test_dataset = CountdownTasksDataset(
+                data_path=config["data"]["path"],
+                tokenizer=tokenizer,
+                split="test",
+                test_size=config["data"]["test_size"],
+            )
+            generator = torch.Generator(device=device)
+            eval_dataloader = DataLoader(
+                test_dataset,
+                shuffle=False,
+                collate_fn=CountdownTasksDataset.collate_fn,
+                generator=generator,
+                batch_size=min(5, config["data"]["test_size"]),  # Log a small subset of eval examples
+                drop_last=False,
+            )
+            
+            for eval_batch in eval_dataloader:
+                eval_episodes = rollout(
+                    model=model,
+                    tokenizer=tokenizer,
+                    batch=eval_batch,
+                    max_gen_len=config["training"]["max_gen_len"] * 2,
+                    num_answer_per_question=1, 
+                    reward_function=reward_function,
+                    device=device,
+                    dtype=dtype,
+                )
+                eval_log_file = log_dir / f"eval_responses_{current_time}.json"
+                save_responses_to_json(eval_episodes, step, eval_log_file)
+                break  # Just log one batch of eval examples
 
         # Log metrics to TensorBoard
         tb_writer.add_scalar("loss", loss, step)
