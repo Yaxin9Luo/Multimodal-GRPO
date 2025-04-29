@@ -18,14 +18,23 @@ def load_model(model_path, original_model_dir, device):
     
     # Load fine-tuned checkpoint
     checkpoint = torch.load(model_path, map_location=device)
+    
+    # Check if checkpoint is valid
+    print(f"Checkpoint keys: {list(checkpoint.keys())[:5]}...")
+    
+    # Load state dictionary
     model.load_state_dict(checkpoint)
+    
+    # Verify a few parameters to ensure the model was loaded
+    first_param = next(model.parameters())
+    print(f"First parameter shape: {first_param.shape}, mean: {first_param.mean().item():.6f}")
     
     model.eval()
     return model
 
 
 @torch.no_grad()
-def generate_answer(model, tokenizer, numbers, target, device="cuda", max_new_tokens=128):
+def generate_answer(model, tokenizer, numbers, target, device="cuda", max_new_tokens=512, temperature=0.7):
     """Generate an answer to the countdown task using the exact training format."""
     # Format the prompt exactly as in training
     user_message = USER_TEMPLATE.format(numbers=numbers, target=target)
@@ -48,53 +57,91 @@ def generate_answer(model, tokenizer, numbers, target, device="cuda", max_new_to
     
     # Prepare input
     input_ids = torch.tensor([prefix_token_ids], dtype=torch.long, device=device)
+    end_token = tokenizer.eos_token
+    end_token_id = tokenizer.eos_token_id
+    pad_token_id = tokenizer.pad_token_id
+    
+    # Generate in a manner more similar to the training rollout function
+    total_len = len(prefix_token_ids) + max_new_tokens
+    tokens = torch.full((1, total_len), pad_token_id, dtype=torch.long, device=device)
+    tokens[0, :len(prefix_token_ids)] = torch.tensor(prefix_token_ids, dtype=torch.long, device=device)
     
     # Initialize KV cache
     model.init_kv_cache(
         max_batch_size=1,
-        max_seq_len=len(prefix_token_ids) + max_new_tokens,
+        max_seq_len=total_len,
         device=device,
         dtype=torch.bfloat16,
     )
     
     # Generate tokens
-    generated_ids = []
+    input_text_mask = tokens != pad_token_id
+    is_finished = torch.zeros((1,), dtype=torch.bool, device=device)
+    prev_pos = 0
     
     try:
-        curr_ids = input_ids
-        position = 0
-        
-        for i in range(max_new_tokens):
+        for cur_pos in range(len(prefix_token_ids), total_len):
+            # Print progress every 10 tokens
+            if (cur_pos - len(prefix_token_ids)) % 10 == 0:
+                print(f"\rGenerating: {cur_pos-len(prefix_token_ids)}/{max_new_tokens}", end="", flush=True)
+            
+            # Get logits with autocast
+            with torch.autocast(device_type=device.type, dtype=torch.bfloat16):
+                logits = model.inference(tokens[:, prev_pos:cur_pos], prev_pos)
+            
             # Get next token logits
-            logits = model.inference(curr_ids, start_pos=position)
             next_token_logits = logits[0, -1, :]
             
-            # Sample next token
-            probs = torch.nn.functional.softmax(next_token_logits, dim=0)
-            next_token = torch.multinomial(probs, num_samples=1).item()
+            # Apply temperature if needed
+            if temperature > 0:
+                next_token_logits = next_token_logits / temperature
             
-            # Add to generated sequence
-            generated_ids.append(next_token)
+            # Sample from distribution
+            probs = torch.nn.functional.softmax(next_token_logits, dim=-1)
             
-            # Stop if end token
-            if next_token == tokenizer.eos_token_id:
+            # Use argmax for very low temperature, multinomial otherwise
+            if temperature <= 0.01:
+                next_token = torch.argmax(probs).item()
+            else:
+                next_token = torch.multinomial(probs, num_samples=1).item()
+            
+            # Check for mask
+            next_token = torch.where(
+                input_text_mask[:, cur_pos], tokens[:, cur_pos], torch.tensor([next_token], device=device)
+            )[0].item()
+            
+            # Handle finished sequences
+            next_token = torch.where(is_finished, pad_token_id, next_token).item()
+            tokens[:, cur_pos] = next_token
+            
+            # Check for end token
+            if end_token_id is not None:
+                is_end_token = next_token == end_token_id
+                is_generated_token = ~input_text_mask[:, cur_pos]
+                is_finished = is_finished | (is_end_token & is_generated_token)
+            
+            prev_pos = cur_pos
+            
+            # Early stopping if finished
+            if is_finished.all():
                 break
-            
-            # Prepare for next iteration
-            curr_ids = torch.tensor([[next_token]], dtype=torch.long, device=device)
-            position += 1
     
     finally:
+        print("\rGeneration completed                    ")
         # Clean up
         model.del_kv_cache()
     
-    # Get the generated text
-    generated_text = tokenizer.detokenize(generated_ids)
-    full_text = prefix + generated_text
+    # Get the generated text (only the generated part)
+    generated_token_ids = tokens[0, len(prefix_token_ids):cur_pos].tolist()
+    # Remove padding tokens if any
+    if pad_token_id in generated_token_ids:
+        generated_token_ids = generated_token_ids[:generated_token_ids.index(pad_token_id)]
     
+    generated_text = tokenizer.detokenize(generated_token_ids)
+        
     return {
         "generated_text": generated_text,
-        "full_text": full_text
+        "full_text": prefix + generated_text
     }
 
 
@@ -106,6 +153,8 @@ def main():
                         help="Path to the original model directory for initialization")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu",
                         help="Device to run inference on")
+    parser.add_argument("--temperature", type=float, default=0.01,
+                        help="Temperature for generation (lower = more deterministic)")
     
     args = parser.parse_args()
     
@@ -128,6 +177,7 @@ def main():
     )
     
     print("\nCountdown Task Evaluator")
+    print(f"Temperature: {args.temperature}")
     print("Type 'exit' to quit")
     
     while True:
@@ -169,7 +219,8 @@ def main():
                 tokenizer=tokenizer,
                 numbers=numbers,
                 target=target,
-                device=device
+                device=device,
+                temperature=args.temperature
             )
             
             print("\nModel response:")

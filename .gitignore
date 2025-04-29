@@ -16,6 +16,8 @@ Qwen2.5-VL-3B-Instruct/
 ViRL39K/
 wandb/
 # Distribution / packaging
+/vl_logs/
+/evaluation_results/
 .Python
 build/
 develop-eggs/

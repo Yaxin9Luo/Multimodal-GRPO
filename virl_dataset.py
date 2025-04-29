@@ -13,19 +13,23 @@ from data_types import MiniBatch
 from tokenizer import Tokenizer
 import sympy
 
+# Updated system message for better clarity and guidance
 SYSTEM_MESSAGE = (
-    "You are a helpful vision-language assistant. You are given an image and a question about it. "
-    "ALWAYS analyze the image carefully and provide a DETAILED step-by-step reasoning before giving your final answer. "
-    "Be thorough and consider all relevant aspects of the image before reaching a conclusion."
+    "You are a helpful vision-language assistant skilled at solving visual reasoning problems. "
+    "When given an image and a question, analyze the image carefully and provide detailed explanations. "
+    "Always approach problems step-by-step and show your complete reasoning process. "
+    "Be thorough, precise, and consider all relevant visual details before reaching your conclusion."
 )
 
+# Enhanced user template with clearer instructions
 USER_TEMPLATE = (
-    "IMPORTANT: First think step-by-step to solve this problem {question}, based on the image. "
-    "Show your work in <think> </think> tags. "
-    "And return the final answer in <answer> </answer> tags, for example <answer> A </answer>."    
+    "Analyze the image and solve this problem: {question}\n\n"
+    "IMPORTANT: First think step-by-step to solve this problem. "
+    "Show your detailed reasoning in <think> </think> tags.\n"
+    "Then provide your final answer in <answer> </answer> tags. Be precise and concise in your final answer."
 )
 
-RESPONSE_PROMPT = "Let me solve this step by step.\n<think>"
+RESPONSE_PROMPT = "I'll solve this step by step.\n<think>"
 
 
 class ViRLDataset(Dataset):

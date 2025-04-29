@@ -188,7 +188,7 @@ def main(config_path: str):
     
     # Watch the model in wandb to track gradients, parameters, etc.
     if wandb_enabled:
-        wandb.watch(model, log="all", log_freq=config["training"]["eval_interval"])
+        wandb.watch(model, log=None)
 
     for step, batch in enumerate(train_dataloader, start=1):
         episodes = rollout(

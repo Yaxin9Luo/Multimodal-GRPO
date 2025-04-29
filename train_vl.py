@@ -234,9 +234,9 @@ def main(config_path: str):
     ckpt_dir = Path(config["training"]["ckpt_dir"])
     ckpt_dir.mkdir(parents=True, exist_ok=True)
     
-    # Watch the model in wandb to track gradients, parameters, etc.
+    # Disable gradient logging to save wandb space
     if wandb_enabled:
-        wandb.watch(model, log="all", log_freq=config["training"]["eval_interval"])
+        wandb.watch(model, log=None)
 
     # Training loop
     step = 1
